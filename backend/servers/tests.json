@@ -1,0 +1,10 @@
+{
+  "tests": [
+    {
+      "name": "Get servers list",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 200
+    }
+  ]
+}

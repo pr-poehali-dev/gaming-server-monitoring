@@ -1,9 +1,45 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Icon from '@/components/ui/icon';
 import { MOCK_SERVERS, GAMES } from '@/data/mockData';
+import { servers as serversApi } from '@/lib/api';
 
 interface ServersPageProps {
   onNavigate: (page: string) => void;
+}
+
+interface ServerData {
+  id: string | number;
+  name: string;
+  game: string;
+  ip: string;
+  map: string;
+  players?: number;
+  current_players?: number;
+  maxPlayers?: number;
+  max_players?: number;
+  ping?: number;
+  rank?: number;
+  rating?: number;
+  votes?: number;
+  isOnline?: boolean;
+  is_online?: boolean;
+  isPremium?: boolean;
+  is_premium?: boolean;
+  isBoosted?: boolean;
+  is_boosted?: boolean;
+  tags?: string[];
+  description?: string;
+  image?: string;
+  image_url?: string;
+  uptime?: number;
+  addedDays?: number;
+  added_days?: number;
+  country?: string;
+  version?: string;
+  website?: string;
+  discord?: string;
+  owner?: string;
+  history?: number[];
 }
 
 export default function ServersPage({ onNavigate }: ServersPageProps) {
@@ -12,25 +48,69 @@ export default function ServersPage({ onNavigate }: ServersPageProps) {
   const [sortBy, setSortBy] = useState('rank');
   const [filterOnline, setFilterOnline] = useState(false);
   const [filterPremium, setFilterPremium] = useState(false);
-  const [selectedServer, setSelectedServer] = useState<typeof MOCK_SERVERS[0] | null>(null);
+  const [selectedServer, setSelectedServer] = useState<ServerData | null>(null);
+  const [serverList, setServerList] = useState<ServerData[]>(MOCK_SERVERS);
+  const [loading, setLoading] = useState(false);
+  const [serverHistory, setServerHistory] = useState<number[]>([]);
+
+  const getIsOnline = (s: ServerData) => s.is_online ?? s.isOnline ?? false;
+  const getIsPremium = (s: ServerData) => s.is_premium ?? s.isPremium ?? false;
+  const getPlayers = (s: ServerData) => s.current_players ?? s.players ?? 0;
+  const getMaxPlayers = (s: ServerData) => s.max_players ?? s.maxPlayers ?? 0;
+
+  useEffect(() => {
+    const fetchServers = async () => {
+      setLoading(true);
+      try {
+        const params: { game?: string; sort?: string; online?: boolean; search?: string } = {};
+        if (activeGame !== 'all') params.game = activeGame;
+        params.sort = sortBy;
+        if (filterOnline) params.online = true;
+        if (search) params.search = search;
+
+        const { status, data } = await serversApi.list(params);
+        if (status === 200 && Array.isArray(data?.servers) && data.servers.length > 0) {
+          setServerList(data.servers);
+        } else {
+          setServerList(MOCK_SERVERS);
+        }
+      } catch {
+        setServerList(MOCK_SERVERS);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchServers();
+  }, [activeGame, sortBy, filterOnline, search]);
 
   const getGameInfo = (id: string) => GAMES.find(g => g.id === id);
 
-  const filtered = MOCK_SERVERS
-    .filter(s => {
-      if (activeGame !== 'all' && s.game !== activeGame) return false;
-      if (filterOnline && !s.isOnline) return false;
-      if (filterPremium && !s.isPremium) return false;
-      if (search && !s.name.toLowerCase().includes(search.toLowerCase()) && !s.map.toLowerCase().includes(search.toLowerCase())) return false;
-      return true;
-    })
-    .sort((a, b) => {
-      if (sortBy === 'players') return b.players - a.players;
-      if (sortBy === 'rating') return b.rating - a.rating;
-      if (sortBy === 'ping') return a.ping - b.ping;
-      if (sortBy === 'votes') return b.votes - a.votes;
-      return a.rank - b.rank;
-    });
+  const filtered = serverList.filter(s => {
+    if (filterPremium && !getIsPremium(s)) return false;
+    return true;
+  });
+
+  const handleSelectServer = async (server: ServerData) => {
+    setSelectedServer(server);
+    setServerHistory(server.history ?? []);
+    try {
+      const id = typeof server.id === 'string' ? parseInt(server.id, 10) : server.id;
+      const [detailRes, histRes] = await Promise.all([
+        serversApi.get(id),
+        serversApi.history(id),
+      ]);
+      if (detailRes.status === 200 && detailRes.data) {
+        setSelectedServer(detailRes.data.server ?? detailRes.data);
+      }
+      if (histRes.status === 200 && Array.isArray(histRes.data?.history)) {
+        setServerHistory(histRes.data.history);
+      } else if (Array.isArray(histRes.data)) {
+        setServerHistory(histRes.data);
+      }
+    } catch {
+      // Keep existing data on error
+    }
+  };
 
   return (
     <div className="min-h-screen pt-8">
@@ -98,57 +178,74 @@ export default function ServersPage({ onNavigate }: ServersPageProps) {
         </div>
 
         {/* Server List */}
-        {selectedServer ? (
-          <ServerDetail server={selectedServer} onBack={() => setSelectedServer(null)} onNavigate={onNavigate} />
+        {loading ? (
+          <div className="text-center py-20">
+            <div className="font-orbitron text-gray-500 text-sm animate-pulse">ЗАГРУЗКА...</div>
+          </div>
+        ) : selectedServer ? (
+          <ServerDetail
+            server={selectedServer}
+            history={serverHistory}
+            onBack={() => { setSelectedServer(null); setServerHistory([]); }}
+            onNavigate={onNavigate}
+          />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {filtered.map((server, i) => {
               const game = getGameInfo(server.game);
-              const fillPct = Math.round((server.players / server.maxPlayers) * 100);
+              const players = getPlayers(server);
+              const maxPlayers = getMaxPlayers(server);
+              const fillPct = maxPlayers > 0 ? Math.round((players / maxPlayers) * 100) : 0;
+              const isOnline = getIsOnline(server);
+              const rank = server.rank ?? (i + 1);
+              const imageUrl = server.image_url ?? server.image ?? '';
               return (
                 <div
                   key={server.id}
                   className="cyber-card rounded-xl overflow-hidden cursor-pointer group animate-fade-in"
                   style={{ opacity: 0, animationDelay: `${i * 0.04}s` }}
-                  onClick={() => setSelectedServer(server)}
+                  onClick={() => handleSelectServer(server)}
                 >
                   <div className="relative h-36 overflow-hidden">
-                    <img src={server.image} alt={server.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                    <img src={imageUrl} alt={server.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                     <div className="absolute inset-0 bg-gradient-to-t from-cyber-card via-transparent to-transparent" />
                     <div className="absolute top-2 left-2 flex gap-1">
-                      {server.isBoosted && <span className="text-xs px-1.5 py-0.5 rounded font-orbitron font-bold" style={{ background: '#ff6b35', color: '#fff' }}>BOOST</span>}
-                      {server.isPremium && <span className="text-xs px-1.5 py-0.5 rounded font-orbitron font-bold" style={{ background: '#00ff88', color: '#0a0a0f' }}>PRO</span>}
+                      {(server.is_boosted ?? server.isBoosted) && <span className="text-xs px-1.5 py-0.5 rounded font-orbitron font-bold" style={{ background: '#ff6b35', color: '#fff' }}>BOOST</span>}
+                      {(server.is_premium ?? server.isPremium) && <span className="text-xs px-1.5 py-0.5 rounded font-orbitron font-bold" style={{ background: '#00ff88', color: '#0a0a0f' }}>PRO</span>}
                     </div>
                     <div className="absolute top-2 right-2">
-                      <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${server.isOnline ? 'bg-neon-green/20 text-neon-green' : 'bg-red-900/40 text-red-400'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${server.isOnline ? 'bg-neon-green animate-pulse' : 'bg-red-400'}`} />
-                        {server.isOnline ? 'Online' : 'Offline'}
+                      <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${isOnline ? 'bg-neon-green/20 text-neon-green' : 'bg-red-900/40 text-red-400'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-neon-green animate-pulse' : 'bg-red-400'}`} />
+                        {isOnline ? 'Online' : 'Offline'}
                       </span>
                     </div>
                     <div className="absolute bottom-2 left-2 right-2 flex items-end justify-between">
                       <span className="text-xs font-orbitron font-bold" style={{ color: game?.color }}>{game?.icon} {game?.name}</span>
-                      <span className="font-orbitron font-black text-sm" style={{ color: server.rank <= 3 ? ['#ffd700', '#c0c0c0', '#cd7f32'][server.rank - 1] : '#555' }}>
-                        #{server.rank}
+                      <span className="font-orbitron font-black text-sm" style={{ color: rank <= 3 ? (['#ffd700', '#c0c0c0', '#cd7f32'] as string[])[rank - 1] : '#555' }}>
+                        #{rank}
                       </span>
                     </div>
                   </div>
                   <div className="p-4">
                     <h3 className="font-semibold text-white mb-1 truncate group-hover:text-neon-green transition-colors">{server.name}</h3>
-                    <p className="text-gray-500 text-xs mb-3 line-clamp-2 font-golos">{server.description}</p>
+                    <p className="text-gray-500 text-xs mb-3 line-clamp-2 font-golos">{server.description ?? ''}</p>
                     <div className="flex gap-1 mb-3 flex-wrap">
-                      {server.tags.slice(0, 3).map(tag => (
+                      {(server.tags ?? []).slice(0, 3).map(tag => (
                         <span key={tag} className="text-xs px-1.5 py-0.5 rounded font-golos" style={{ background: '#1a1a2e', color: '#666', border: '1px solid #1a1a2e' }}>{tag}</span>
                       ))}
                     </div>
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center gap-3 text-xs text-gray-500">
                         <span className="flex items-center gap-1"><Icon name="Map" size={10} /> {server.map}</span>
-                        <span className="flex items-center gap-1"><Icon name="Wifi" size={10} style={{ color: server.ping < 20 ? '#00ff88' : server.ping < 50 ? '#f0a500' : '#ff2244' }} /> {server.ping}ms</span>
+                        <span className="flex items-center gap-1">
+                          <Icon name="Wifi" size={10} style={{ color: (server.ping ?? 0) < 20 ? '#00ff88' : (server.ping ?? 0) < 50 ? '#f0a500' : '#ff2244' }} />
+                          {server.ping ?? 0}ms
+                        </span>
                       </div>
                       <div className="flex items-center gap-1 text-xs">
                         <Icon name="Star" size={10} className="text-yellow-400" />
-                        <span className="text-white font-semibold">{server.rating}</span>
-                        <span className="text-gray-600">({server.votes})</span>
+                        <span className="text-white font-semibold">{server.rating ?? 0}</span>
+                        <span className="text-gray-600">({server.votes ?? 0})</span>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -158,7 +255,7 @@ export default function ServersPage({ onNavigate }: ServersPageProps) {
                           background: fillPct > 80 ? '#ff6b35' : fillPct > 50 ? '#f0a500' : '#00ff88'
                         }} />
                       </div>
-                      <span className="text-xs font-orbitron text-white shrink-0">{server.players}/{server.maxPlayers}</span>
+                      <span className="text-xs font-orbitron text-white shrink-0">{players}/{maxPlayers}</span>
                     </div>
                   </div>
                 </div>
@@ -167,7 +264,7 @@ export default function ServersPage({ onNavigate }: ServersPageProps) {
           </div>
         )}
 
-        {filtered.length === 0 && (
+        {!loading && filtered.length === 0 && !selectedServer && (
           <div className="text-center py-20">
             <div className="text-6xl mb-4">🔍</div>
             <h3 className="font-orbitron text-xl text-gray-400 mb-2">Серверы не найдены</h3>
@@ -179,10 +276,46 @@ export default function ServersPage({ onNavigate }: ServersPageProps) {
   );
 }
 
-function ServerDetail({ server, onBack, onNavigate }: { server: typeof MOCK_SERVERS[0]; onBack: () => void; onNavigate: (p: string) => void }) {
+function ServerDetail({ server, history, onBack, onNavigate }: {
+  server: ServerData;
+  history: number[];
+  onBack: () => void;
+  onNavigate: (p: string) => void;
+}) {
   const game = GAMES.find(g => g.id === server.game);
-  const fillPct = Math.round((server.players / server.maxPlayers) * 100);
-  const maxHistory = Math.max(...server.history);
+  const players = server.current_players ?? server.players ?? 0;
+  const maxPlayers = server.max_players ?? server.maxPlayers ?? 0;
+  const fillPct = maxPlayers > 0 ? Math.round((players / maxPlayers) * 100) : 0;
+  const isOnline = server.is_online ?? server.isOnline ?? false;
+  const isBoosted = server.is_boosted ?? server.isBoosted ?? false;
+  const isPremium = server.is_premium ?? server.isPremium ?? false;
+  const rank = server.rank ?? 0;
+  const ping = server.ping ?? 0;
+  const uptime = server.uptime ?? 0;
+  const imageUrl = server.image_url ?? server.image ?? '';
+  const displayHistory = history.length > 0 ? history : (server.history ?? []);
+  const maxHistory = displayHistory.length > 0 ? Math.max(...displayHistory) : 1;
+
+  const [voteMsg, setVoteMsg] = useState('');
+  const [voteLoading, setVoteLoading] = useState(false);
+
+  const handleVote = async () => {
+    setVoteLoading(true);
+    setVoteMsg('');
+    try {
+      const id = typeof server.id === 'string' ? parseInt(server.id, 10) : server.id;
+      const { status, data } = await serversApi.vote(id);
+      if (status === 200) {
+        setVoteMsg('Голос засчитан!');
+      } else {
+        setVoteMsg((data as { error?: string })?.error ?? 'Ошибка при голосовании');
+      }
+    } catch {
+      setVoteMsg('Ошибка при голосовании');
+    } finally {
+      setVoteLoading(false);
+    }
+  };
 
   return (
     <div className="animate-fade-in" style={{ opacity: 0 }}>
@@ -194,13 +327,13 @@ function ServerDetail({ server, onBack, onNavigate }: { server: typeof MOCK_SERV
           {/* Header */}
           <div className="cyber-card rounded-xl overflow-hidden">
             <div className="relative h-56">
-              <img src={server.image} alt={server.name} className="w-full h-full object-cover" />
+              <img src={imageUrl} alt={server.name} className="w-full h-full object-cover" />
               <div className="absolute inset-0 bg-gradient-to-t from-cyber-card to-transparent" />
               <div className="absolute bottom-4 left-4 right-4">
                 <div className="flex items-center gap-2 mb-2">
-                  {server.isBoosted && <span className="text-xs px-2 py-0.5 rounded font-orbitron font-bold" style={{ background: '#ff6b35', color: '#fff' }}>BOOST</span>}
-                  {server.isPremium && <span className="text-xs px-2 py-0.5 rounded font-orbitron font-bold" style={{ background: '#00ff88', color: '#0a0a0f' }}>PRO</span>}
-                  <span className="text-xs px-2 py-0.5 rounded font-orbitron" style={{ background: '#1a1a2e', color: '#666' }}>#{server.rank}</span>
+                  {isBoosted && <span className="text-xs px-2 py-0.5 rounded font-orbitron font-bold" style={{ background: '#ff6b35', color: '#fff' }}>BOOST</span>}
+                  {isPremium && <span className="text-xs px-2 py-0.5 rounded font-orbitron font-bold" style={{ background: '#00ff88', color: '#0a0a0f' }}>PRO</span>}
+                  <span className="text-xs px-2 py-0.5 rounded font-orbitron" style={{ background: '#1a1a2e', color: '#666' }}>#{rank}</span>
                 </div>
                 <h1 className="font-orbitron text-2xl font-black text-white">{server.name}</h1>
               </div>
@@ -208,10 +341,10 @@ function ServerDetail({ server, onBack, onNavigate }: { server: typeof MOCK_SERV
             <div className="p-5">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                 {[
-                  { label: 'Статус', value: server.isOnline ? 'ONLINE' : 'OFFLINE', color: server.isOnline ? '#00ff88' : '#ff2244' },
-                  { label: 'Игроки', value: `${server.players}/${server.maxPlayers}`, color: '#fff' },
-                  { label: 'Пинг', value: `${server.ping}ms`, color: server.ping < 20 ? '#00ff88' : server.ping < 50 ? '#f0a500' : '#ff2244' },
-                  { label: 'Uptime', value: `${server.uptime}%`, color: '#00ff88' },
+                  { label: 'Статус', value: isOnline ? 'ONLINE' : 'OFFLINE', color: isOnline ? '#00ff88' : '#ff2244' },
+                  { label: 'Игроки', value: `${players}/${maxPlayers}`, color: '#fff' },
+                  { label: 'Пинг', value: `${ping}ms`, color: ping < 20 ? '#00ff88' : ping < 50 ? '#f0a500' : '#ff2244' },
+                  { label: 'Uptime', value: `${uptime}%`, color: '#00ff88' },
                 ].map(stat => (
                   <div key={stat.label} className="text-center p-3 rounded-lg" style={{ background: '#12121f' }}>
                     <div className="font-orbitron font-bold text-lg" style={{ color: stat.color }}>{stat.value}</div>
@@ -233,10 +366,10 @@ function ServerDetail({ server, onBack, onNavigate }: { server: typeof MOCK_SERV
                 </div>
               </div>
 
-              <p className="text-gray-400 text-sm font-golos mb-4">{server.description}</p>
+              <p className="text-gray-400 text-sm font-golos mb-4">{server.description ?? ''}</p>
 
               <div className="flex flex-wrap gap-2 mb-4">
-                {server.tags.map(tag => (
+                {(server.tags ?? []).map(tag => (
                   <span key={tag} className="px-2 py-1 rounded text-xs font-golos" style={{ background: '#1a1a2e', color: '#aaa', border: '1px solid #2a2a3e' }}>{tag}</span>
                 ))}
               </div>
@@ -244,11 +377,11 @@ function ServerDetail({ server, onBack, onNavigate }: { server: typeof MOCK_SERV
               <div className="grid grid-cols-2 gap-3 text-sm">
                 {[
                   { icon: 'Map', label: 'Карта', value: server.map },
-                  { icon: 'Code', label: 'Версия', value: server.version },
-                  { icon: 'Globe', label: 'Страна', value: server.country },
-                  { icon: 'Calendar', label: 'Добавлен', value: `${server.addedDays} дней назад` },
+                  { icon: 'Code', label: 'Версия', value: server.version ?? '—' },
+                  { icon: 'Globe', label: 'Страна', value: server.country ?? '—' },
+                  { icon: 'Calendar', label: 'Добавлен', value: `${server.addedDays ?? server.added_days ?? 0} дней назад` },
                   { icon: 'Server', label: 'IP', value: server.ip },
-                  { icon: 'User', label: 'Владелец', value: server.owner },
+                  { icon: 'User', label: 'Владелец', value: server.owner ?? '—' },
                 ].map(item => (
                   <div key={item.label} className="flex items-center gap-2">
                     <Icon name={item.icon} size={14} className="text-gray-500 shrink-0" />
@@ -263,19 +396,25 @@ function ServerDetail({ server, onBack, onNavigate }: { server: typeof MOCK_SERV
           {/* Mini chart */}
           <div className="cyber-card rounded-xl p-5">
             <h3 className="font-orbitron text-sm font-bold text-white mb-4">ИСТОРИЯ ОНЛАЙНА (24 ЧАСА)</h3>
-            <div className="flex items-end gap-1 h-20">
-              {server.history.map((val, i) => (
-                <div key={i} className="flex-1 rounded-t transition-all hover:opacity-80 group relative cursor-default"
-                  style={{ height: `${(val / maxHistory) * 100}%`, background: `linear-gradient(to top, #00ff88, #00ff8860)` }}>
-                  <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-orbitron text-neon-green opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                    {val}
-                  </div>
+            {displayHistory.length > 0 ? (
+              <>
+                <div className="flex items-end gap-1 h-20">
+                  {displayHistory.map((val, i) => (
+                    <div key={i} className="flex-1 rounded-t transition-all hover:opacity-80 group relative cursor-default"
+                      style={{ height: `${(val / maxHistory) * 100}%`, background: `linear-gradient(to top, #00ff88, #00ff8860)` }}>
+                      <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-xs font-orbitron text-neon-green opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                        {val}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div className="flex justify-between mt-1 text-xs text-gray-600 font-golos">
-              <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span>
-            </div>
+                <div className="flex justify-between mt-1 text-xs text-gray-600 font-golos">
+                  <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span>
+                </div>
+              </>
+            ) : (
+              <p className="text-gray-600 font-golos text-sm">Данные истории недоступны</p>
+            )}
           </div>
         </div>
 
@@ -285,12 +424,18 @@ function ServerDetail({ server, onBack, onNavigate }: { server: typeof MOCK_SERV
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-1">
                 <Icon name="Star" size={16} className="text-yellow-400" />
-                <span className="font-orbitron text-2xl font-black text-white">{server.rating}</span>
+                <span className="font-orbitron text-2xl font-black text-white">{server.rating ?? 0}</span>
               </div>
-              <span className="text-sm text-gray-500 font-golos">{server.votes} голосов</span>
+              <span className="text-sm text-gray-500 font-golos">{server.votes ?? 0} голосов</span>
             </div>
-            <button className="cyber-btn-green w-full py-3 rounded-md text-sm mb-2">
-              <Icon name="ThumbsUp" size={14} className="inline mr-2" /> ПРОГОЛОСОВАТЬ
+            {voteMsg && (
+              <p className={`text-xs mb-2 font-golos ${voteMsg === 'Голос засчитан!' ? 'text-neon-green' : 'text-red-400'}`}>{voteMsg}</p>
+            )}
+            <button
+              onClick={handleVote}
+              disabled={voteLoading}
+              className="cyber-btn-green w-full py-3 rounded-md text-sm mb-2 disabled:opacity-50 disabled:cursor-not-allowed">
+              <Icon name="ThumbsUp" size={14} className="inline mr-2" /> {voteLoading ? 'ОТПРАВКА...' : 'ПРОГОЛОСОВАТЬ'}
             </button>
             <button onClick={() => onNavigate('shop')} className="cyber-btn-outline w-full py-2.5 rounded-md text-xs bg-transparent">
               🚀 ЗАБУСТИТЬ СЕРВЕР
@@ -304,8 +449,8 @@ function ServerDetail({ server, onBack, onNavigate }: { server: typeof MOCK_SERV
                 className="flex items-center gap-2 p-2 rounded-lg hover:bg-[#5865f220] transition-colors group">
                 <div className="w-8 h-8 rounded-md flex items-center justify-center text-white font-bold text-sm" style={{ background: '#5865f2' }}>D</div>
                 <div>
-                  <div className="text-xs text-gray-400 group-hover:text-white transition-colors font-golos">{server.discord}</div>
-                  <div className="text-xs text-gray-600 font-golos">Discord сервер</div>
+                  <div className="text-xs text-white font-golos group-hover:text-[#5865f4] transition-colors">{server.discord}</div>
+                  <div className="text-xs text-gray-500 font-golos">Discord сервер</div>
                 </div>
               </a>
             </div>
@@ -317,7 +462,7 @@ function ServerDetail({ server, onBack, onNavigate }: { server: typeof MOCK_SERV
               <span className="text-2xl">{game?.icon}</span>
               <div>
                 <div className="font-orbitron font-bold text-sm" style={{ color: game?.color }}>{game?.name}</div>
-                <div className="text-xs text-gray-500 font-golos">v{server.version}</div>
+                <div className="text-xs text-gray-500 font-golos">v{server.version ?? '—'}</div>
               </div>
             </div>
           </div>

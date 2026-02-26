@@ -1,19 +1,78 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Icon from '@/components/ui/icon';
 import { MOCK_SERVERS, GAMES, CHAT_MESSAGES } from '@/data/mockData';
+import { servers as serversApi, chat as chatApi } from '@/lib/api';
 
 interface HomePageProps {
   onNavigate: (page: string) => void;
 }
 
+interface ServerData {
+  id: string | number;
+  name: string;
+  game: string;
+  ip: string;
+  map: string;
+  players?: number;
+  current_players?: number;
+  maxPlayers?: number;
+  max_players?: number;
+  ping?: number;
+  rank?: number;
+  rating?: number;
+  votes?: number;
+  isOnline?: boolean;
+  is_online?: boolean;
+  isPremium?: boolean;
+  is_premium?: boolean;
+  isBoosted?: boolean;
+  is_boosted?: boolean;
+  tags?: string[];
+  description?: string;
+  image?: string;
+  image_url?: string;
+}
+
+interface ChatMessage {
+  id: number | string;
+  user: string;
+  role: string;
+  text: string;
+  time: string;
+  avatar: string;
+}
+
 export default function HomePage({ onNavigate }: HomePageProps) {
   const [chatInput, setChatInput] = useState('');
-  const [messages, setMessages] = useState(CHAT_MESSAGES);
+  const [messages, setMessages] = useState<ChatMessage[]>(CHAT_MESSAGES);
   const [activeGame, setActiveGame] = useState('all');
   const [stats, setStats] = useState({ servers: 0, players: 0, online: 0 });
+  const [serverList, setServerList] = useState<ServerData[]>(MOCK_SERVERS);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const target = { servers: 2847, players: 148920, online: 12340 };
+    serversApi.list({ sort: 'rank', limit: 10 }).then(({ status, data }) => {
+      if (status === 200 && Array.isArray(data?.servers) && data.servers.length > 0) {
+        setServerList(data.servers);
+        const total = data.servers.length;
+        const totalPlayers = data.servers.reduce((acc: number, s: ServerData) => acc + (s.current_players ?? s.players ?? 0), 0);
+        const onlineCount = data.servers.filter((s: ServerData) => s.is_online ?? s.isOnline ?? false).length;
+        animateStats({ servers: total, players: totalPlayers, online: onlineCount });
+      } else {
+        const total = MOCK_SERVERS.length;
+        const totalPlayers = MOCK_SERVERS.reduce((acc, s) => acc + (s.players ?? 0), 0);
+        const onlineCount = MOCK_SERVERS.filter(s => s.isOnline).length;
+        animateStats({ servers: total, players: totalPlayers, online: onlineCount });
+      }
+    }).catch(() => {
+      const total = MOCK_SERVERS.length;
+      const totalPlayers = MOCK_SERVERS.reduce((acc, s) => acc + (s.players ?? 0), 0);
+      const onlineCount = MOCK_SERVERS.filter(s => s.isOnline).length;
+      animateStats({ servers: total, players: totalPlayers, online: onlineCount });
+    });
+  }, []);
+
+  const animateStats = (target: { servers: number; players: number; online: number }) => {
     const duration = 1500;
     const steps = 60;
     let step = 0;
@@ -27,26 +86,59 @@ export default function HomePage({ onNavigate }: HomePageProps) {
       });
       if (step >= steps) clearInterval(timer);
     }, duration / steps);
-    return () => clearInterval(timer);
+  };
+
+  useEffect(() => {
+    const loadMessages = () => {
+      chatApi.getMessages(50).then(({ status, data }) => {
+        if (status === 200 && Array.isArray(data?.messages) && data.messages.length > 0) {
+          setMessages(data.messages);
+        }
+      }).catch(() => {});
+    };
+    loadMessages();
+    const interval = setInterval(loadMessages, 10000);
+    return () => clearInterval(interval);
   }, []);
 
-  const topServers = MOCK_SERVERS.slice(0, 5);
-  const top10 = MOCK_SERVERS.slice(0, 10);
-  const filteredServers = activeGame === 'all'
-    ? MOCK_SERVERS.slice(0, 6)
-    : MOCK_SERVERS.filter(s => s.game === activeGame).slice(0, 6);
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
-  const sendMessage = () => {
+  const topServers = serverList.slice(0, 5);
+  const top10 = serverList.slice(0, 10);
+  const filteredServers = activeGame === 'all'
+    ? serverList.slice(0, 6)
+    : serverList.filter(s => s.game === activeGame).slice(0, 6);
+
+  const sendMessage = async () => {
     if (!chatInput.trim()) return;
-    setMessages(prev => [...prev, {
-      id: prev.length + 1,
-      user: 'Гость',
-      role: 'user',
-      text: chatInput,
-      time: new Date().toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }),
-      avatar: 'Г',
-    }]);
+    const text = chatInput;
     setChatInput('');
+    try {
+      const { status, data } = await chatApi.send(text);
+      if (status === 200 && data?.message) {
+        setMessages(prev => [...prev, data.message]);
+      } else {
+        setMessages(prev => [...prev, {
+          id: Date.now(),
+          user: 'Гость',
+          role: 'user',
+          text,
+          time: new Date().toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }),
+          avatar: 'Г',
+        }]);
+      }
+    } catch {
+      setMessages(prev => [...prev, {
+        id: Date.now(),
+        user: 'Гость',
+        role: 'user',
+        text,
+        time: new Date().toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }),
+        avatar: 'Г',
+      }]);
+    }
   };
 
   const getGameInfo = (gameId: string) => GAMES.find(g => g.id === gameId);
@@ -57,6 +149,13 @@ export default function HomePage({ onNavigate }: HomePageProps) {
     if (rank === 3) return { icon: '🥉', color: '#cd7f32' };
     return { icon: `#${rank}`, color: '#666' };
   };
+
+  const getPlayers = (server: ServerData) => server.current_players ?? server.players ?? 0;
+  const getMaxPlayers = (server: ServerData) => server.max_players ?? server.maxPlayers ?? 0;
+  const getIsOnline = (server: ServerData) => server.is_online ?? server.isOnline ?? false;
+  const getIsBoosted = (server: ServerData) => server.is_boosted ?? server.isBoosted ?? false;
+  const getIsPremium = (server: ServerData) => server.is_premium ?? server.isPremium ?? false;
+  const getImage = (server: ServerData) => server.image_url ?? server.image ?? '';
 
   return (
     <div className="min-h-screen">
@@ -120,22 +219,25 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                 </button>
               </div>
               <div className="space-y-3">
-                {topServers.map((server) => {
-                  const medal = getRankMedal(server.rank);
+                {topServers.map((server, idx) => {
+                  const rank = server.rank ?? (idx + 1);
+                  const medal = getRankMedal(rank);
                   const game = getGameInfo(server.game);
-                  const fillPct = Math.round((server.players / server.maxPlayers) * 100);
+                  const players = getPlayers(server);
+                  const maxPlayers = getMaxPlayers(server);
+                  const fillPct = maxPlayers > 0 ? Math.round((players / maxPlayers) * 100) : 0;
                   return (
                     <div key={server.id} className="cyber-card rounded-lg p-4 flex items-center gap-4 cursor-pointer group"
                       onClick={() => onNavigate('servers')}>
                       <div className="font-orbitron text-lg font-black w-8 text-center" style={{ color: medal.color }}>
-                        {server.rank <= 3 ? medal.icon : `#${server.rank}`}
+                        {rank <= 3 ? medal.icon : `#${rank}`}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
-                          {server.isBoosted && (
+                          {getIsBoosted(server) && (
                             <span className="text-xs px-1.5 py-0.5 rounded font-orbitron font-bold" style={{ background: '#ff6b3520', color: '#ff6b35', border: '1px solid #ff6b3540' }}>BOOST</span>
                           )}
-                          {server.isPremium && (
+                          {getIsPremium(server) && (
                             <span className="text-xs px-1.5 py-0.5 rounded font-orbitron font-bold" style={{ background: '#00ff8820', color: '#00ff88', border: '1px solid #00ff8840' }}>PRO</span>
                           )}
                           <span className="text-white font-semibold truncate group-hover:text-neon-green transition-colors">{server.name}</span>
@@ -143,13 +245,13 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                         <div className="flex items-center gap-3 text-xs text-gray-500">
                           <span>{game?.icon} {game?.name}</span>
                           <span>• {server.map}</span>
-                          <span>• ★ {server.rating}</span>
+                          <span>• ★ {server.rating ?? 0}</span>
                         </div>
                       </div>
                       <div className="text-right shrink-0">
                         <div className="flex items-center gap-1.5 mb-1">
                           <span className="online-dot shrink-0" />
-                          <span className="font-orbitron text-sm font-bold text-white">{server.players}<span className="text-gray-500">/{server.maxPlayers}</span></span>
+                          <span className="font-orbitron text-sm font-bold text-white">{players}<span className="text-gray-500">/{maxPlayers}</span></span>
                         </div>
                         <div className="w-24 h-1.5 bg-cyber-border rounded-full overflow-hidden">
                           <div className="h-full rounded-full transition-all" style={{
@@ -169,40 +271,42 @@ export default function HomePage({ onNavigate }: HomePageProps) {
               <div className="flex items-center gap-2 mb-4 flex-wrap">
                 <button
                   onClick={() => setActiveGame('all')}
-                  className={`px-3 py-1.5 rounded-md text-sm font-orbitron font-semibold transition-all ${activeGame === 'all' ? 'bg-neon-green text-cyber-dark' : 'border border-cyber-border text-gray-400 hover:border-neon-green/50 hover:text-white'}`}>
+                  className={`px-3 py-1.5 rounded-md text-sm font-orbitron font-semibold transition-all ${activeGame === 'all' ? 'bg-neon-green text-cyber-dark' : 'border border-cyber-border text-gray-400 hover:border-neon-green/30'}`}>
                   ВСЕ
                 </button>
                 {GAMES.map(game => (
                   <button
                     key={game.id}
                     onClick={() => setActiveGame(game.id)}
-                    className={`px-3 py-1.5 rounded-md text-sm font-golos transition-all ${activeGame === game.id ? 'text-cyber-dark font-bold' : 'border border-cyber-border text-gray-400 hover:text-white'}`}
+                    className={`px-3 py-1.5 rounded-md text-sm font-golos transition-all ${activeGame === game.id ? 'font-bold text-cyber-dark' : 'border border-cyber-border text-gray-400 hover:text-white'}`}
                     style={activeGame === game.id ? { background: game.color } : {}}>
-                    {game.icon} {game.name.split(' ')[0]}
+                    {game.icon}
                   </button>
                 ))}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {filteredServers.map((server, i) => {
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {filteredServers.map((server) => {
                   const game = getGameInfo(server.game);
-                  const fillPct = Math.round((server.players / server.maxPlayers) * 100);
+                  const players = getPlayers(server);
+                  const maxPlayers = getMaxPlayers(server);
+                  const fillPct = maxPlayers > 0 ? Math.round((players / maxPlayers) * 100) : 0;
+                  const isOnline = getIsOnline(server);
+                  const rank = server.rank ?? 0;
                   return (
-                    <div key={server.id}
-                      className="cyber-card rounded-xl overflow-hidden cursor-pointer group animate-fade-in"
-                      style={{ opacity: 0, animationDelay: `${i * 0.06}s` }}
+                    <div key={server.id} className="cyber-card rounded-xl overflow-hidden cursor-pointer group"
                       onClick={() => onNavigate('servers')}>
                       <div className="relative h-28 overflow-hidden">
-                        <img src={server.image} alt={server.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+                        <img src={getImage(server)} alt={server.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
                         <div className="absolute inset-0 bg-gradient-to-t from-cyber-card via-transparent to-transparent" />
                         <div className="absolute top-2 left-2 flex gap-1">
-                          {server.isBoosted && <span className="text-xs px-1.5 py-0.5 rounded font-orbitron font-bold" style={{ background: '#ff6b35', color: '#fff' }}>BOOST</span>}
-                          {server.isPremium && <span className="text-xs px-1.5 py-0.5 rounded font-orbitron font-bold" style={{ background: '#00ff88', color: '#0a0a0f' }}>PRO</span>}
+                          {getIsBoosted(server) && <span className="text-xs px-1.5 py-0.5 rounded font-orbitron font-bold" style={{ background: '#ff6b35', color: '#fff' }}>BOOST</span>}
+                          {getIsPremium(server) && <span className="text-xs px-1.5 py-0.5 rounded font-orbitron font-bold" style={{ background: '#00ff88', color: '#0a0a0f' }}>PRO</span>}
                         </div>
                         <div className="absolute top-2 right-2">
-                          <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${server.isOnline ? 'bg-neon-green/20 text-neon-green' : 'bg-red-900/40 text-red-400'}`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${server.isOnline ? 'bg-neon-green' : 'bg-red-400'}`} />
-                            {server.isOnline ? 'Online' : 'Offline'}
+                          <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${isOnline ? 'bg-neon-green/20 text-neon-green' : 'bg-red-900/40 text-red-400'}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-neon-green' : 'bg-red-400'}`} />
+                            {isOnline ? 'Online' : 'Offline'}
                           </span>
                         </div>
                         <div className="absolute bottom-2 right-2 text-xs font-orbitron font-bold" style={{ color: game?.color }}>
@@ -215,8 +319,8 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                           <div className="text-xs text-gray-500">{server.map}</div>
                           <div className="flex items-center gap-1 text-xs text-gray-400">
                             <Icon name="Star" size={10} className="text-yellow-400" />
-                            <span>{server.rating}</span>
-                            <span className="text-gray-600">({server.votes})</span>
+                            <span>{server.rating ?? 0}</span>
+                            <span className="text-gray-600">({server.votes ?? 0})</span>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
@@ -226,7 +330,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                               background: fillPct > 80 ? '#ff6b35' : fillPct > 50 ? '#f0a500' : '#00ff88'
                             }} />
                           </div>
-                          <span className="text-xs font-orbitron text-white shrink-0">{server.players}/{server.maxPlayers}</span>
+                          <span className="text-xs font-orbitron text-white shrink-0">{players}/{maxPlayers}</span>
                         </div>
                       </div>
                     </div>
@@ -255,6 +359,10 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                   <tbody>
                     {top10.map((server, i) => {
                       const game = getGameInfo(server.game);
+                      const players = getPlayers(server);
+                      const maxPlayers = getMaxPlayers(server);
+                      const isOnline = getIsOnline(server);
+                      const ping = server.ping ?? 0;
                       return (
                         <tr key={server.id}
                           className="border-b border-cyber-border/50 hover:bg-neon-green/5 cursor-pointer transition-colors"
@@ -268,7 +376,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                           </td>
                           <td className="p-3">
                             <div className="flex items-center gap-2">
-                              {server.isBoosted && <span className="text-xs px-1 py-0.5 rounded font-orbitron font-bold hidden sm:inline" style={{ background: '#ff6b3520', color: '#ff6b35', border: '1px solid #ff6b3540' }}>B</span>}
+                              {getIsBoosted(server) && <span className="text-xs px-1 py-0.5 rounded font-orbitron font-bold hidden sm:inline" style={{ background: '#ff6b3520', color: '#ff6b35', border: '1px solid #ff6b3540' }}>B</span>}
                               <span className="text-white text-sm truncate max-w-[140px] md:max-w-[200px]">{server.name}</span>
                             </div>
                           </td>
@@ -276,20 +384,20 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                             <span className="text-xs text-gray-400">{game?.icon} {game?.name}</span>
                           </td>
                           <td className="p-3 text-right">
-                            <span className={`font-orbitron text-sm font-bold ${server.isOnline ? 'text-neon-green' : 'text-red-400'}`}>
-                              {server.isOnline ? server.players : '—'}
+                            <span className={`font-orbitron text-sm font-bold ${isOnline ? 'text-neon-green' : 'text-red-400'}`}>
+                              {isOnline ? players : '—'}
                             </span>
-                            <span className="text-gray-600 text-xs">/{server.maxPlayers}</span>
+                            <span className="text-gray-600 text-xs">/{maxPlayers}</span>
                           </td>
                           <td className="p-3 text-right hidden sm:table-cell">
-                            <span className={`text-sm font-orbitron ${server.ping < 20 ? 'text-neon-green' : server.ping < 50 ? 'text-yellow-400' : 'text-red-400'}`}>
-                              {server.ping}ms
+                            <span className={`text-sm font-orbitron ${ping < 20 ? 'text-neon-green' : ping < 50 ? 'text-yellow-400' : 'text-red-400'}`}>
+                              {ping}ms
                             </span>
                           </td>
                           <td className="p-3 text-right">
                             <div className="flex items-center justify-end gap-1">
                               <Icon name="Star" size={12} className="text-yellow-400" />
-                              <span className="text-sm text-white">{server.rating}</span>
+                              <span className="text-sm text-white">{server.rating ?? 0}</span>
                             </div>
                           </td>
                         </tr>
@@ -323,7 +431,7 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                         color: msg.role === 'admin' ? '#ff6b35' : msg.role === 'premium' ? '#00ff88' : '#666',
                         border: `1px solid ${msg.role === 'admin' ? '#ff6b3540' : msg.role === 'premium' ? '#00ff8840' : '#1a1a2e'}`
                       }}>
-                      {msg.avatar.slice(0, 2)}
+                      {String(msg.avatar).slice(0, 2)}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
@@ -332,28 +440,27 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                         }}>
                           {msg.user}
                         </span>
-                        {msg.role === 'admin' && <span className="text-xs px-1 rounded text-xs font-orbitron" style={{ background: '#ff6b3520', color: '#ff6b35' }}>ADM</span>}
-                        {msg.role === 'premium' && <span className="text-xs px-1 rounded text-xs font-orbitron" style={{ background: '#00ff8820', color: '#00ff88' }}>PRO</span>}
+                        {msg.role === 'admin' && <span className="text-xs px-1 rounded font-orbitron" style={{ background: '#ff6b3520', color: '#ff6b35' }}>ADM</span>}
+                        {msg.role === 'premium' && <span className="text-xs px-1 rounded font-orbitron" style={{ background: '#00ff8820', color: '#00ff88' }}>PRO</span>}
                         <span className="text-gray-600 text-xs ml-auto">{msg.time}</span>
                       </div>
-                      <p className="text-gray-300 text-xs mt-0.5 break-words">{msg.text}</p>
+                      <p className="text-xs text-gray-400 font-golos mt-0.5 break-words">{msg.text}</p>
                     </div>
                   </div>
                 ))}
+                <div ref={chatBottomRef} />
               </div>
-              <div className="p-3 border-t border-cyber-border">
-                <div className="flex gap-2">
-                  <input
-                    value={chatInput}
-                    onChange={e => setChatInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && sendMessage()}
-                    placeholder="Написать в чат..."
-                    className="flex-1 bg-cyber-surface border border-cyber-border rounded-md px-3 py-2 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-neon-green/50 transition-colors font-golos"
-                  />
-                  <button onClick={sendMessage} className="cyber-btn-green px-3 py-2 rounded-md">
-                    <Icon name="Send" size={14} />
-                  </button>
-                </div>
+              <div className="p-3 border-t border-cyber-border flex gap-2">
+                <input
+                  value={chatInput}
+                  onChange={e => setChatInput(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && sendMessage()}
+                  placeholder="Написать в чат..."
+                  className="flex-1 bg-cyber-surface border border-cyber-border rounded-md px-3 py-2 text-xs text-white placeholder-gray-600 focus:outline-none focus:border-neon-green/50 transition-colors font-golos"
+                />
+                <button onClick={sendMessage} className="cyber-btn-green px-3 py-2 rounded-md">
+                  <Icon name="Send" size={14} />
+                </button>
               </div>
             </div>
 
@@ -364,11 +471,11 @@ export default function HomePage({ onNavigate }: HomePageProps) {
                 <span className="text-white">ТОП DayZ</span>
               </h3>
               <div className="space-y-2">
-                {MOCK_SERVERS.filter(s => s.game === 'dayz').slice(0, 5).map((server, i) => (
+                {serverList.filter(s => s.game === 'dayz').slice(0, 5).map((server, i) => (
                   <div key={server.id} className="flex items-center gap-2 cursor-pointer hover:text-neon-green transition-colors group" onClick={() => onNavigate('servers')}>
                     <span className="font-orbitron text-xs w-4 text-gray-500">#{i + 1}</span>
                     <span className="flex-1 text-xs text-gray-300 truncate group-hover:text-neon-green transition-colors">{server.name}</span>
-                    <span className="text-xs font-orbitron text-neon-green">{server.players}</span>
+                    <span className="text-xs font-orbitron text-neon-green">{getPlayers(server)}</span>
                   </div>
                 ))}
               </div>

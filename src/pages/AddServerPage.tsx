@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Icon from '@/components/ui/icon';
 import { GAMES } from '@/data/mockData';
+import { servers as serversApi, auth } from '@/lib/api';
 
 interface AddServerPageProps {
   onNavigate: (page: string) => void;
@@ -10,6 +11,8 @@ const STEPS = ['Игра', 'Основное', 'Детали', 'Медиа', 'Г
 
 export default function AddServerPage({ onNavigate }: AddServerPageProps) {
   const [step, setStep] = useState(0);
+  const [submitError, setSubmitError] = useState('');
+  const [submitLoading, setSubmitLoading] = useState(false);
   const [form, setForm] = useState({
     game: '',
     name: '',
@@ -39,6 +42,53 @@ export default function AddServerPage({ onNavigate }: AddServerPageProps) {
   };
 
   const removeTag = (tag: string) => update('tags', form.tags.filter(t => t !== tag));
+
+  if (!auth.isLoggedIn()) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-center animate-scale-in" style={{ opacity: 0 }}>
+          <div className="text-6xl mb-5">🔐</div>
+          <h2 className="font-orbitron text-2xl font-black text-white mb-3">ТРЕБУЕТСЯ АККАУНТ</h2>
+          <p className="text-gray-400 font-golos mb-6">Войди в аккаунт для добавления сервера</p>
+          <button onClick={() => onNavigate('profile')} className="cyber-btn-green px-8 py-3 rounded-md text-sm">
+            ВОЙТИ В АККАУНТ
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const handleSubmit = async () => {
+    setSubmitError('');
+    setSubmitLoading(true);
+    try {
+      const { status, data } = await serversApi.create({
+        name: form.name,
+        game: form.game,
+        ip: form.ip,
+        port: form.port ? parseInt(form.port, 10) : undefined,
+        map: form.map,
+        max_players: form.maxPlayers ? parseInt(form.maxPlayers, 10) : undefined,
+        version: form.version,
+        description: form.description,
+        tags: form.tags,
+        discord: form.discord,
+        website: form.website,
+        is_modded: form.isModded,
+        is_pvp: form.isPvP,
+        is_rp: form.isRP,
+      });
+      if (status === 200) {
+        setStep(4);
+      } else {
+        setSubmitError((data as { error?: string })?.error ?? 'Ошибка при добавлении сервера');
+      }
+    } catch {
+      setSubmitError('Ошибка соединения');
+    } finally {
+      setSubmitLoading(false);
+    }
+  };
 
   if (step === 4) {
     return (
@@ -225,6 +275,9 @@ export default function AddServerPage({ onNavigate }: AddServerPageProps) {
               <div className="p-4 rounded-lg" style={{ background: '#12121f', border: '1px solid #1a1a2e' }}>
                 <p className="text-xs text-gray-500 font-golos">💡 <strong className="text-gray-400">Совет:</strong> Сервера с качественными скриншотами получают на 3x больше кликов. Загрузи красивый скриншот из игры.</p>
               </div>
+              {submitError && (
+                <p className="text-red-400 text-xs mt-3 font-golos">{submitError}</p>
+              )}
             </div>
           )}
 
@@ -238,12 +291,15 @@ export default function AddServerPage({ onNavigate }: AddServerPageProps) {
             </button>
             <button
               onClick={() => {
-                if (step < STEPS.length - 2) setStep(step + 1);
-                else setStep(4);
+                if (step < STEPS.length - 2) {
+                  setStep(step + 1);
+                } else {
+                  handleSubmit();
+                }
               }}
-              disabled={step === 0 && !form.game}
+              disabled={(step === 0 && !form.game) || submitLoading}
               className="cyber-btn-green px-6 py-2.5 rounded-md text-sm disabled:opacity-40 disabled:cursor-not-allowed">
-              {step === 3 ? 'ОПУБЛИКОВАТЬ' : 'ДАЛЕЕ'} <Icon name="ArrowRight" size={14} className="inline ml-1" />
+              {step === 3 ? (submitLoading ? 'ПУБЛИКАЦИЯ...' : 'ОПУБЛИКОВАТЬ') : 'ДАЛЕЕ'} <Icon name="ArrowRight" size={14} className="inline ml-1" />
             </button>
           </div>
         </div>
