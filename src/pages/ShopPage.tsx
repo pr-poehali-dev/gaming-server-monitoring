@@ -116,7 +116,7 @@ export default function ShopPage({ onNavigate }: ShopPageProps) {
                   <div className="text-center mb-5">
                     <div className="font-orbitron font-black text-4xl mb-1" style={{ color: boost.color }}>🚀</div>
                     <div className="font-orbitron text-lg font-bold text-white">{boost.name}</div>
-                    <div className="font-orbitron text-3xl font-black text-white mt-2">{boost.price}₽</div>
+                    <div className="font-orbitron text-3xl font-black text-white mt-2">900</div>
                     <div className="text-xs font-golos mt-1" style={{ color: boost.color }}>{boost.duration}</div>
                   </div>
                   <div className="space-y-2 mb-5">
